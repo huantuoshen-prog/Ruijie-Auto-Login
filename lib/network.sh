@@ -107,10 +107,7 @@ do_login() {
     _vid=$(echo "$_login_page_url" | grep -oE "vid=[^&]+" | cut -d= -f2-)
     _url=$(echo "$_login_page_url" | grep -oE "url=[^&]+" | cut -d= -f2-)
 
-    # 动态提取失败时，用原脚本硬编码值兜底（广科院环境经验证）
-    _fallback_qs="wlanuserip=94ca20c0fb0e777ea4972aaa297a8f3e&wlanacname=643d07a46528c937f09836d589740409&ssid=&nasip=cc5b64e516a1fa61d915e184b913e171&snmpagentip=&mac=e9610ea931d21016b0af5fed148bfe73&t=wireless-v2&url=418b8bb474ba4db13cc1f6dc4a2e7e2b147e5d21f7c9202b&apmac=&nasid=643d07a46528c937f09836d589740409&vid=e7e9ec1de0977a03&port=2dbe874bc250c5f9&nasportid=489ecc80e9f86aea0ba5dc4a08edd8a223dbed083ee5e03fe78d14a5ae3564de"
-
-    # 统计缺失的关键参数数量，超过 3 个则切换到硬编码兜底
+    # 统计缺失的关键参数数量，过多缺失时直接失败，避免使用过期或他人的网络参数
     _missing=0
     [ -z "$_wlanuserip" ] && _missing=$((_missing + 1))
     [ -z "$_wlanacname" ] && _missing=$((_missing + 1))
@@ -120,12 +117,13 @@ do_login() {
     [ -z "$_vid" ]        && _missing=$((_missing + 1))   # vid 缺失率高，服务器可能校验
 
     if [ "$_missing" -ge 3 ]; then
-        _queryString="$_fallback_qs"
-        [ "$VERBOSE" = "true" ] && echo "[VERBOSE] 关键参数缺失($_missing个)，切换到硬编码兜底 queryString"
-    else
-        # 动态参数可用，vid/url 用提取值（空则留空）
-        _queryString="wlanuserip=${_wlanuserip}&wlanacname=${_wlanacname}&ssid=&nasip=${_nasip}&snmpagentip=&mac=${_mac}&t=wireless-v2&url=${_url}&apmac=&nasid=${_nasid}&vid=${_vid}&port=&nasportid="
+        log_error "登录页面缺少关键认证参数($_missing个)，无法安全构建 queryString"
+        log_warning "请确认当前网络已被锐捷门户重定向，或使用 -v 查看 portal URL"
+        return 1
     fi
+
+    # 动态参数可用，vid/url 用提取值（空则留空）
+    _queryString="wlanuserip=${_wlanuserip}&wlanacname=${_wlanacname}&ssid=&nasip=${_nasip}&snmpagentip=&mac=${_mac}&t=wireless-v2&url=${_url}&apmac=&nasid=${_nasid}&vid=${_vid}&port=&nasportid="
     _queryString="${_queryString//&/%2526}"
     _queryString="${_queryString//=/%253D}"
 
@@ -141,7 +139,7 @@ do_login() {
     log_info "用户名: $_username"
     log_info "账号类型: $_account_type"
 
-    authResult=$(curl_with_proxy -s -A "$USER_AGENT" \
+    authResult=$(curl_with_proxy -s -m 30 -A "$USER_AGENT" \
         -e "${_login_page_url}" \
         -b "EPORTAL_COOKIE_USERNAME=; EPORTAL_COOKIE_PASSWORD=; EPORTAL_COOKIE_SERVER=; EPORTAL_COOKIE_SERVER_NAME=; EPORTAL_AUTO_LAND=; EPORTAL_USER_GROUP=; EPORTAL_COOKIE_OPERATORPWD=;" \
         -d "userId=${_username}&password=${_password}&service=${_service}&queryString=${_queryString}&operatorPwd=&operatorUserId=&validcode=&passwordEncrypt=false" \
